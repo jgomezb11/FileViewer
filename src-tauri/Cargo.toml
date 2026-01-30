@@ -1,0 +1,27 @@
+[package]
+name = "video-partitioner"
+version = "0.1.0"
+description = "A desktop application for splitting large video files into smaller partitions"
+authors = ["you"]
+edition = "2021"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.8", features = [ "fs-exists", "fs-read-file", "fs-read-dir", "fs-write-file",
+  "dialog-open",
+  "dialog-save",
+  "shell-sidecar",
+  "protocol-asset",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

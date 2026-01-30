@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config:*)",
+      "Bash(git -C \"C:\\\\Users\\\\Agosto\\\\Viewer\" log --oneline --all)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(rustup target list:*)",
+      "Bash(npx @tauri-apps/cli@1:*)",
+      "Bash(npm create:*)",
+      "Bash(npx create-tauri-app:*)",
+      "WebSearch",
+      "WebFetch(domain:v1.tauri.app)",
+      "Bash(npm view:*)",
+      "Bash(findstr:*)",
+      "Bash(npm install)",
+      "Bash(npx vitest:*)",
+      "Bash(where link:*)",
+      "Bash(rustup show:*)",
+      "Bash(cmd.exe /C \"where /R \"\"C:\\\\Program Files\\\\Microsoft Visual Studio\"\" link.exe 2>&1\")",
+      "Bash(cmd /C \"where /R \"\"C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\"\" link.exe 2>NUL\")",
+      "Bash(cmd /C \"where /R \"\"C:\\\\Program Files\\\\Microsoft Visual Studio\"\" link.exe 2>NUL\")",
+      "Bash(cmd /C \"where /R \"\"C:\\\\BuildTools\"\" link.exe 2>NUL\")",
+      "Bash(cmd /C \"where /R \"\"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\VC\"\" link.exe\")",
+      "Bash(cmd.exe /C \"where /R C:\\\\Progra~1\\\\Micros~4\\\\2022\\\\Community\\\\VC link.exe\")",
+      "Bash(powershell:*)",
+      "Bash(PATH=\"/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64:$PATH\" cargo check:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(node:*)"
+    ]
+  }
+}
