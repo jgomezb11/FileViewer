@@ -1,37 +1,11 @@
 import { convertFileSrc } from '@tauri-apps/api/tauri';
-import { invoke } from '@tauri-apps/api/tauri';
-import { useCallback, useEffect } from 'react';
 import { useDirectoryStore } from '../stores/directoryStore';
 
 export const PhotoViewer = () => {
   const files = useDirectoryStore((state) => state.files);
   const currentIndex = useDirectoryStore((state) => state.currentIndex);
-  const removeFile = useDirectoryStore((state) => state.removeFile);
 
   const currentFile = files[currentIndex];
-
-  const handleDelete = useCallback(async () => {
-    if (!currentFile) return;
-
-    try {
-      await invoke('move_to_trash', { filePath: currentFile.path });
-      removeFile(currentIndex);
-    } catch (err) {
-      console.error('Failed to move to trash:', err);
-    }
-  }, [currentFile, currentIndex, removeFile]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Delete') {
-        e.preventDefault();
-        handleDelete();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleDelete]);
 
   if (!currentFile) {
     return (

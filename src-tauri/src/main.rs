@@ -11,6 +11,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::metadata::get_video_metadata,
             commands::ffmpeg::execute_split,
+            commands::ffmpeg::generate_thumbnails,
+            commands::ffmpeg::capture_frame,
             commands::file::list_directory,
             commands::file::delete_file,
             commands::file::move_to_trash,

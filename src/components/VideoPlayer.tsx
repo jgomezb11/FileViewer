@@ -1,5 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/tauri';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useVideoMetadata } from '../hooks/useVideoMetadata';
 import { useVideoStore } from '../stores/videoStore';
 
@@ -9,7 +9,29 @@ export const VideoPlayer = () => {
   const setCurrentTime = useVideoStore((state) => state.setCurrentTime);
   const setMetadata = useVideoStore((state) => state.setMetadata);
   const metadata = useVideoStore((state) => state.metadata);
+  const seekTo = useVideoStore((state) => state.seekTo);
+  const setSeekTo = useVideoStore((state) => state.setSeekTo);
+  const togglePlaySignal = useVideoStore((state) => state.togglePlaySignal);
+  const clearTogglePlay = useVideoStore((state) => state.clearTogglePlay);
   const { fetchMetadata } = useVideoMetadata();
+
+  useEffect(() => {
+    if (seekTo !== null && videoRef.current) {
+      videoRef.current.currentTime = seekTo;
+      setSeekTo(null);
+    }
+  }, [seekTo, setSeekTo]);
+
+  useEffect(() => {
+    if (togglePlaySignal !== null && videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play();
+      } else {
+        videoRef.current.pause();
+      }
+      clearTogglePlay();
+    }
+  }, [togglePlaySignal, clearTogglePlay]);
 
   if (!videoFile) {
     return null;

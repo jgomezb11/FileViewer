@@ -1,12 +1,16 @@
+import { invoke } from '@tauri-apps/api/tauri';
 import { useCallback, useEffect } from 'react';
 import { FileSelector } from './components/FileSelector';
 import { PartitionConfig } from './components/PartitionConfig';
 import { PhotoViewer } from './components/PhotoViewer';
 import { ProgressBar } from './components/ProgressBar';
+import { ShortcutsBar } from './components/ShortcutsBar';
 import { Timeline } from './components/Timeline';
+import { ToastContainer } from './components/Toast';
 import { VideoPlayer } from './components/VideoPlayer';
 import { useDirectoryStore } from './stores/directoryStore';
 import { usePartitionStore } from './stores/partitionStore';
+import { useToastStore } from './stores/toastStore';
 import { useVideoStore } from './stores/videoStore';
 
 export const App = () => {
@@ -15,10 +19,15 @@ export const App = () => {
   const setVideoFile = useVideoStore((state) => state.setVideoFile);
   const resetPartition = usePartitionStore((state) => state.reset);
 
+  const currentTime = useVideoStore((state) => state.currentTime);
+  const setTogglePlay = useVideoStore((state) => state.setTogglePlay);
+  const addToast = useToastStore((state) => state.addToast);
+
   const directoryPath = useDirectoryStore((state) => state.directoryPath);
   const files = useDirectoryStore((state) => state.files);
   const currentIndex = useDirectoryStore((state) => state.currentIndex);
   const setCurrentIndex = useDirectoryStore((state) => state.setCurrentIndex);
+  const removeFile = useDirectoryStore((state) => state.removeFile);
   const resetDirectory = useDirectoryStore((state) => state.reset);
 
   const currentFile = directoryPath ? files[currentIndex] : null;
@@ -52,6 +61,32 @@ export const App = () => {
     resetDirectory();
   };
 
+  const handleDeleteFile = useCallback(async () => {
+    if (!isDirectoryMode || !currentFile) return;
+    try {
+      await invoke('move_to_trash', { filePath: currentFile.path });
+      resetVideo();
+      resetPartition();
+      removeFile(currentIndex);
+    } catch (err) {
+      console.error('Failed to move to trash:', err);
+    }
+  }, [isDirectoryMode, currentFile, currentIndex, removeFile, resetVideo, resetPartition]);
+
+  const handleScreenshot = useCallback(async () => {
+    if (!videoFile) return;
+    try {
+      const outputPath: string = await invoke('capture_frame', {
+        videoPath: videoFile,
+        timestampSecs: currentTime,
+      });
+      const fileName = outputPath.split('\\').pop() ?? outputPath.split('/').pop() ?? outputPath;
+      addToast(`Saved: ${fileName}`, 'success');
+    } catch (err) {
+      addToast(`Screenshot failed: ${err}`, 'error');
+    }
+  }, [videoFile, currentTime, addToast]);
+
   const navigateFiles = useCallback(
     (direction: -1 | 1) => {
       if (!isDirectoryMode || files.length === 0) return;
@@ -69,12 +104,20 @@ export const App = () => {
         navigateFiles(-1);
       } else if (e.key === 'ArrowRight') {
         navigateFiles(1);
+      } else if (e.key === 'Delete') {
+        e.preventDefault();
+        handleDeleteFile();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        setTogglePlay();
+      } else if (e.key === 's' || e.key === 'S') {
+        handleScreenshot();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigateFiles]);
+  }, [navigateFiles, handleDeleteFile, setTogglePlay, handleScreenshot]);
 
   const showFileSelector = !videoFile && !isDirectoryMode;
   const showDirectoryVideo = isDirectoryMode && isVideoFile && videoFile;
@@ -121,9 +164,12 @@ export const App = () => {
         )}
       </main>
 
-      <footer className="border-t border-gray-700 px-6 py-2">
+      <footer className="flex items-center justify-between border-t border-gray-700 px-6 py-2">
+        <ShortcutsBar />
         <ProgressBar />
       </footer>
+
+      <ToastContainer />
     </div>
   );
 };

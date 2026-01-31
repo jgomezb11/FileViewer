@@ -12,6 +12,7 @@ interface PartitionState {
   setTargetSizeGb: (size: number) => void;
   addExclusion: (interval: TimeInterval) => void;
   removeExclusion: (index: number) => void;
+  updateExclusion: (index: number, interval: TimeInterval) => void;
   setPartitionPoints: (points: PartitionPoint[]) => void;
   setOutputDir: (dir: string | null) => void;
   setStatus: (status: ProcessingStatus) => void;
@@ -33,6 +34,10 @@ export const usePartitionStore = create<PartitionState>()((set) => ({
   removeExclusion: (index) =>
     set((state) => ({
       exclusions: state.exclusions.filter((_, i) => i !== index),
+    })),
+  updateExclusion: (index, interval) =>
+    set((state) => ({
+      exclusions: state.exclusions.map((e, i) => (i === index ? interval : e)),
     })),
   setPartitionPoints: (points) => set({ partitionPoints: points }),
   setOutputDir: (dir) => set({ outputDir: dir }),
