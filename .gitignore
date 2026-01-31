@@ -30,7 +30,6 @@ Desktop.ini
 # FFmpeg binary (too large for git)
 src-tauri/binaries/*.exe
 
-# Logs
 *.log
 npm-debug.log*
 

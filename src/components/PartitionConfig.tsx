@@ -1,6 +1,6 @@
 import { open } from '@tauri-apps/api/dialog';
 import { invoke } from '@tauri-apps/api/tauri';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { usePartitionCalculator } from '../hooks/usePartitionCalculator';
 import { usePartitionStore } from '../stores/partitionStore';
 import { useVideoStore } from '../stores/videoStore';
@@ -20,12 +20,19 @@ export const PartitionConfig = () => {
   const setError = usePartitionStore((state) => state.setError);
   const setOutputDir = usePartitionStore((state) => state.setOutputDir);
 
+  const [deleteOriginal, setDeleteOriginal] = useState(true);
+
   const { calculate } = usePartitionCalculator();
 
   // Auto-recalculate partition points when inputs change
   useEffect(() => {
     calculate();
   }, [calculate]);
+
+  const handleReset = () => {
+    setStatus('idle');
+    setProgress(0);
+  };
 
   const handleSplit = async () => {
     if (!metadata || !videoFile) return;
@@ -52,6 +59,14 @@ export const PartitionConfig = () => {
       });
       setStatus('complete');
       setProgress(100);
+
+      if (deleteOriginal) {
+        try {
+          await invoke('delete_file', { filePath: videoFile });
+        } catch (deleteErr) {
+          console.error('Failed to delete original:', deleteErr);
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -95,14 +110,34 @@ export const PartitionConfig = () => {
 
       <ExclusionEditor />
 
-      <button
-        type="button"
-        disabled={!metadata || status === 'processing'}
-        onClick={handleSplit}
-        className="w-full rounded bg-blue-600 px-4 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-      >
-        {status === 'processing' ? 'Processing...' : 'Split Video'}
-      </button>
+      <label className="flex items-center gap-2 text-sm text-gray-400">
+        <input
+          type="checkbox"
+          checked={deleteOriginal}
+          onChange={(e) => setDeleteOriginal(e.target.checked)}
+          className="rounded"
+        />
+        Delete original after split
+      </label>
+
+      {status === 'complete' ? (
+        <button
+          type="button"
+          onClick={handleReset}
+          className="w-full rounded bg-gray-600 px-4 py-2 font-medium text-white transition-colors hover:bg-gray-500"
+        >
+          Reset
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={!metadata || status === 'processing'}
+          onClick={handleSplit}
+          className="w-full rounded bg-blue-600 px-4 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+        >
+          {status === 'processing' ? 'Processing...' : 'Split Video'}
+        </button>
+      )}
     </div>
   );
 };

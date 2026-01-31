@@ -4,17 +4,46 @@ export const ProgressBar = () => {
   const status = usePartitionStore((state) => state.status);
   const progress = usePartitionStore((state) => state.progress);
   const errorMessage = usePartitionStore((state) => state.errorMessage);
+  const setStatus = usePartitionStore((state) => state.setStatus);
+  const setProgress = usePartitionStore((state) => state.setProgress);
+
+  const handleReset = () => {
+    setStatus('idle');
+    setProgress(0);
+  };
 
   if (status === 'idle') {
     return <p className="text-xs text-gray-500">Ready</p>;
   }
 
   if (status === 'complete') {
-    return <p className="text-xs text-green-400">Complete</p>;
+    return (
+      <div className="flex items-center gap-3">
+        <p className="text-xs text-green-400">Complete</p>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="rounded bg-gray-700 px-2 py-0.5 text-xs text-gray-300 transition-colors hover:bg-gray-600"
+        >
+          Reset
+        </button>
+      </div>
+    );
   }
 
   if (status === 'error') {
-    return <p className="text-xs text-red-400">{errorMessage}</p>;
+    return (
+      <div className="flex items-center gap-3">
+        <p className="text-xs text-red-400">{errorMessage}</p>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="rounded bg-gray-700 px-2 py-0.5 text-xs text-gray-300 transition-colors hover:bg-gray-600"
+        >
+          Reset
+        </button>
+      </div>
+    );
   }
 
   return (
