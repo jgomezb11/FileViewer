@@ -1,8 +1,7 @@
 use std::path::Path;
 
-use tauri::api::process::{Command, CommandEvent};
-
 use crate::models::video::VideoMetadata;
+use crate::utils::ffmpeg_wrapper::run_ffmpeg;
 
 /// Retrieves metadata from a video file using the filesystem and `FFmpeg`.
 ///
@@ -29,7 +28,10 @@ pub async fn get_video_metadata(file_path: String) -> Result<VideoMetadata, Stri
         .unwrap_or_default();
 
     // Run ffmpeg -i to extract media info from stderr
-    let stderr = run_ffmpeg_info(&file_path).await.unwrap_or_default();
+    let stderr = match run_ffmpeg(&["-i", &file_path, "-hide_banner"]).await {
+        Ok((_, err, _)) => err,
+        Err(_) => String::new(),
+    };
 
     let duration_secs = parse_duration(&stderr);
     let (width, height) = parse_resolution(&stderr);
@@ -49,29 +51,6 @@ pub async fn get_video_metadata(file_path: String) -> Result<VideoMetadata, Stri
         bitrate,
         format,
     })
-}
-
-/// Runs `ffmpeg -i <path> -hide_banner` and collects stderr output.
-async fn run_ffmpeg_info(file_path: &str) -> Result<String, String> {
-    let (mut rx, _child) = Command::new_sidecar("binaries/ffmpeg")
-        .map_err(|e| format!("FFmpeg not found: {e}"))?
-        .args(["-i", file_path, "-hide_banner"])
-        .spawn()
-        .map_err(|e| format!("Failed to run FFmpeg: {e}"))?;
-
-    let mut stderr = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&line);
-                stderr.push('\n');
-            }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
-        }
-    }
-
-    Ok(stderr)
 }
 
 /// Parses duration from `FFmpeg` output like `Duration: 01:30:00.50,`

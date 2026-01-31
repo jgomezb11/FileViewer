@@ -1,15 +1,19 @@
 use std::path::Path;
 
-use tauri::api::process::{Command, CommandEvent};
-
 use crate::models::partition::{SplitRequest, TimeInterval};
 use crate::services::calculator::calculate_partition_points;
-use crate::utils::ffmpeg_wrapper::format_ffmpeg_time;
+use crate::utils::ffmpeg_wrapper::{format_ffmpeg_time, run_ffmpeg};
+
+/// A time range in the original video timeline.
+struct Segment {
+    start: f64,
+    end: f64,
+}
 
 /// Executes the video split operation using `FFmpeg` stream copy.
 ///
-/// Calculates partition points, then runs `ffmpeg -c copy` for each segment.
-/// Returns the list of output file paths on success.
+/// Calculates partition points, maps each partition to original-timeline segments
+/// (skipping excluded intervals), extracts them, and concatenates if needed.
 #[allow(clippy::cast_possible_truncation)]
 pub async fn split_video(request: &SplitRequest) -> Result<Vec<String>, String> {
     let input_path = Path::new(&request.input_path);
@@ -33,12 +37,13 @@ pub async fn split_video(request: &SplitRequest) -> Result<Vec<String>, String> 
         .extension()
         .map_or_else(|| "mp4".to_string(), |e| e.to_string_lossy().to_string());
 
-    // Build a minimal metadata struct for the calculator
+    let duration_secs = get_duration_from_ffmpeg(&request.input_path).await?;
+
     let metadata = crate::models::video::VideoMetadata {
         file_path: request.input_path.clone(),
         file_name: file_stem.clone(),
         file_size: fs_meta.len(),
-        duration_secs: get_duration_from_ffmpeg(&request.input_path).await?,
+        duration_secs,
         width: 0,
         height: 0,
         video_codec: String::new(),
@@ -54,14 +59,17 @@ pub async fn split_video(request: &SplitRequest) -> Result<Vec<String>, String> 
     );
 
     if points.is_empty() {
-        return Err("No partition points calculated. Check file size and target partition size.".to_string());
+        return Err(
+            "No partition points calculated. Check file size and target partition size.".to_string(),
+        );
     }
 
+    let included = compute_included_intervals(&request.exclusions, duration_secs);
     let mut output_files = Vec::new();
 
     for point in &points {
-        let start_original = effective_to_original_time(point.start_secs, &request.exclusions);
-        let end_original = effective_to_original_time(point.end_secs, &request.exclusions);
+        let segments =
+            map_partition_to_original_segments(point.start_secs, point.end_secs, &included);
 
         let output_name = if points.len() == 1 {
             format!("{file_stem}_part1.{extension}")
@@ -69,42 +77,125 @@ pub async fn split_video(request: &SplitRequest) -> Result<Vec<String>, String> 
             format!("{file_stem}_part{}.{extension}", point.index + 1)
         };
 
-        let output_path = output_dir.join(&output_name);
-        let output_str = output_path.to_string_lossy().to_string();
+        let final_path = output_dir.join(&output_name);
+        let final_str = final_path.to_string_lossy().to_string();
 
-        run_ffmpeg_split(
-            &request.input_path,
-            &output_str,
-            start_original,
-            end_original,
-        )
-        .await?;
+        if segments.len() == 1 {
+            // Single continuous segment — extract directly
+            extract_segment(
+                &request.input_path,
+                &final_str,
+                segments[0].start,
+                segments[0].end,
+            )
+            .await?;
+        } else {
+            // Multiple segments — extract each, then concatenate
+            let mut temp_paths = Vec::new();
 
-        output_files.push(output_str);
+            for (i, seg) in segments.iter().enumerate() {
+                let temp_name = format!(
+                    "_temp_{file_stem}_p{}_s{i}.{extension}",
+                    point.index + 1
+                );
+                let temp_path = output_dir.join(&temp_name);
+                let temp_str = temp_path.to_string_lossy().to_string();
+
+                extract_segment(&request.input_path, &temp_str, seg.start, seg.end).await?;
+                temp_paths.push(temp_str);
+            }
+
+            concat_segments(&temp_paths, &final_str, output_dir).await?;
+
+            // Clean up temp segment files
+            for p in &temp_paths {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+
+        output_files.push(final_str);
     }
 
     Ok(output_files)
 }
 
-/// Gets video duration by running ffmpeg -i and parsing the output.
-async fn get_duration_from_ffmpeg(file_path: &str) -> Result<f64, String> {
-    let (mut rx, _child) = Command::new_sidecar("binaries/ffmpeg")
-        .map_err(|e| format!("FFmpeg not found: {e}"))?
-        .args(["-i", file_path, "-hide_banner"])
-        .spawn()
-        .map_err(|e| format!("Failed to run FFmpeg: {e}"))?;
+/// Computes the included intervals (complement of exclusions within `[0, duration]`).
+fn compute_included_intervals(exclusions: &[TimeInterval], duration: f64) -> Vec<Segment> {
+    let mut sorted = exclusions.to_vec();
+    sorted.sort_by(|a, b| {
+        a.start_secs
+            .partial_cmp(&b.start_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    let mut stderr = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&line);
-                stderr.push('\n');
-            }
-            CommandEvent::Terminated(_) => break,
-            _ => {}
+    let mut included = Vec::new();
+    let mut pos = 0.0;
+
+    for excl in &sorted {
+        if excl.start_secs > pos {
+            included.push(Segment {
+                start: pos,
+                end: excl.start_secs,
+            });
+        }
+        if excl.end_secs > pos {
+            pos = excl.end_secs;
         }
     }
+
+    if pos < duration {
+        included.push(Segment {
+            start: pos,
+            end: duration,
+        });
+    }
+
+    included
+}
+
+/// Maps a partition (defined in effective time) to a list of original-timeline segments.
+///
+/// Walks through the included intervals, tracking cumulative effective time,
+/// and clips them to the partition boundaries.
+fn map_partition_to_original_segments(
+    effective_start: f64,
+    effective_end: f64,
+    included: &[Segment],
+) -> Vec<Segment> {
+    let mut effective_pos = 0.0;
+    let mut segments = Vec::new();
+
+    for interval in included {
+        let interval_duration = interval.end - interval.start;
+        let interval_effective_end = effective_pos + interval_duration;
+
+        if interval_effective_end > effective_start && effective_pos < effective_end {
+            // This included interval overlaps with our partition
+            let overlap_eff_start = effective_start.max(effective_pos);
+            let overlap_eff_end = effective_end.min(interval_effective_end);
+
+            // Map the effective overlap back to original timestamps
+            let offset_start = overlap_eff_start - effective_pos;
+            let offset_end = overlap_eff_end - effective_pos;
+
+            segments.push(Segment {
+                start: interval.start + offset_start,
+                end: interval.start + offset_end,
+            });
+        }
+
+        effective_pos = interval_effective_end;
+        if effective_pos >= effective_end {
+            break;
+        }
+    }
+
+    segments
+}
+
+/// Gets video duration by running ffmpeg -i and parsing the output.
+async fn get_duration_from_ffmpeg(file_path: &str) -> Result<f64, String> {
+    let (_, stderr, _) = run_ffmpeg(&["-i", file_path, "-hide_banner"]).await?;
 
     for line in stderr.lines() {
         if let Some(idx) = line.find("Duration:") {
@@ -123,29 +214,8 @@ async fn get_duration_from_ffmpeg(file_path: &str) -> Result<f64, String> {
     Err("Could not determine video duration from FFmpeg output".to_string())
 }
 
-/// Maps a time in the effective timeline (excluding excluded intervals) back to the
-/// original video timestamp.
-fn effective_to_original_time(effective_secs: f64, exclusions: &[TimeInterval]) -> f64 {
-    let mut sorted: Vec<&TimeInterval> = exclusions.iter().collect();
-    sorted.sort_by(|a, b| a.start_secs.partial_cmp(&b.start_secs).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut accumulated_skip = 0.0;
-    for excl in &sorted {
-        let excl_duration = excl.end_secs - excl.start_secs;
-        let effective_excl_start = excl.start_secs - accumulated_skip;
-
-        if effective_secs >= effective_excl_start {
-            accumulated_skip += excl_duration;
-        } else {
-            break;
-        }
-    }
-
-    effective_secs + accumulated_skip
-}
-
-/// Runs a single `FFmpeg` split command: `ffmpeg -i input -ss start -to end -c copy output`
-async fn run_ffmpeg_split(
+/// Extracts a single segment from the input using `ffmpeg -c copy`.
+async fn extract_segment(
     input_path: &str,
     output_path: &str,
     start_secs: f64,
@@ -154,46 +224,82 @@ async fn run_ffmpeg_split(
     let start_str = format_ffmpeg_time(start_secs);
     let end_str = format_ffmpeg_time(end_secs);
 
-    let (mut rx, _child) = Command::new_sidecar("binaries/ffmpeg")
-        .map_err(|e| format!("FFmpeg not found: {e}"))?
-        .args([
-            "-i", input_path,
-            "-ss", &start_str,
-            "-to", &end_str,
-            "-c", "copy",
-            "-avoid_negative_ts", "make_zero",
-            "-y",
-            output_path,
-        ])
-        .spawn()
-        .map_err(|e| format!("Failed to run FFmpeg: {e}"))?;
-
-    let mut stderr = String::new();
-    let mut exit_code = None;
-
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&line);
-                stderr.push('\n');
-            }
-            CommandEvent::Terminated(payload) => {
-                exit_code = Some(payload.code.unwrap_or(-1));
-                break;
-            }
-            _ => {}
-        }
-    }
+    let (_, stderr, exit_code) = run_ffmpeg(&[
+        "-i",
+        input_path,
+        "-ss",
+        &start_str,
+        "-to",
+        &end_str,
+        "-c",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-y",
+        output_path,
+    ])
+    .await?;
 
     match exit_code {
         Some(0) => Ok(()),
         Some(code) => Err(format!("FFmpeg exited with code {code}: {stderr}")),
         None => {
-            // Check if output file was created (ffmpeg sometimes doesn't report exit code properly)
             if Path::new(output_path).exists() {
                 Ok(())
             } else {
                 Err(format!("FFmpeg terminated unexpectedly: {stderr}"))
+            }
+        }
+    }
+}
+
+/// Concatenates multiple segment files into a single output using the concat demuxer.
+async fn concat_segments(
+    segment_paths: &[String],
+    output_path: &str,
+    work_dir: &Path,
+) -> Result<(), String> {
+    // Write the concat list file
+    let list_path = work_dir.join("_temp_concat_list.txt");
+    let list_str = list_path.to_string_lossy().to_string();
+
+    let mut list_content = String::new();
+    for path in segment_paths {
+        // FFmpeg concat demuxer needs forward slashes or escaped backslashes
+        let escaped = path.replace('\\', "/");
+        list_content.push_str(&format!("file '{escaped}'\n"));
+    }
+
+    std::fs::write(&list_path, &list_content)
+        .map_err(|e| format!("Failed to write concat list: {e}"))?;
+
+    let (_, stderr, exit_code) = run_ffmpeg(&[
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        &list_str,
+        "-c",
+        "copy",
+        "-y",
+        output_path,
+    ])
+    .await?;
+
+    // Clean up the list file
+    let _ = std::fs::remove_file(&list_path);
+
+    match exit_code {
+        Some(0) => Ok(()),
+        Some(code) => Err(format!(
+            "FFmpeg concat exited with code {code}: {stderr}"
+        )),
+        None => {
+            if Path::new(output_path).exists() {
+                Ok(())
+            } else {
+                Err(format!("FFmpeg concat failed: {stderr}"))
             }
         }
     }

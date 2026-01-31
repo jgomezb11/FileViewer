@@ -1,8 +1,22 @@
 import { useCallback } from 'react';
 import { usePartitionStore } from '../stores/partitionStore';
 import { useVideoStore } from '../stores/videoStore';
-import type { PartitionPoint } from '../types/partition';
+import type { PartitionPoint, TimeInterval } from '../types/partition';
 import { gbToBytes } from '../utils/formatters';
+
+/** Maps a time in the effective timeline back to the original video timestamp. */
+const effectiveToOriginal = (effectiveSecs: number, sorted: TimeInterval[]): number => {
+  let accumulated = 0;
+  for (const excl of sorted) {
+    const effectiveExclStart = excl.startSecs - accumulated;
+    if (effectiveSecs >= effectiveExclStart) {
+      accumulated += excl.endSecs - excl.startSecs;
+    } else {
+      break;
+    }
+  }
+  return effectiveSecs + accumulated;
+};
 
 export const usePartitionCalculator = () => {
   const metadata = useVideoStore((state) => state.metadata);
@@ -28,14 +42,20 @@ export const usePartitionCalculator = () => {
       return;
     }
 
+    // Sort exclusions once for the mapping function
+    const sorted = [...exclusions].sort((a, b) => a.startSecs - b.startSecs);
+
     const timePerPartition = effectiveDuration / partitionCount;
     const points: PartitionPoint[] = [];
 
     for (let i = 0; i < partitionCount; i++) {
+      const effStart = i * timePerPartition;
+      const effEnd = Math.min((i + 1) * timePerPartition, effectiveDuration);
+
       points.push({
         index: i,
-        startSecs: i * timePerPartition,
-        endSecs: Math.min((i + 1) * timePerPartition, effectiveDuration),
+        startSecs: effectiveToOriginal(effStart, sorted),
+        endSecs: effectiveToOriginal(effEnd, sorted),
         estimatedSizeBytes: Math.min(targetBytes, effectiveSize - i * targetBytes),
       });
     }
